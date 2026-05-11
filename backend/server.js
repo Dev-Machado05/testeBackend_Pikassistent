@@ -245,20 +245,12 @@ app.post("/api/chat", async (req, res) => {
 // "roll" a random card
 app.post("/api/rollCard", async (req, res) => {
   try {
-    const { userId, token } = req.body;
-    const currentTokenAmount = Number(token ?? 0);
+    const { userId } = req.body;
 
     if (!userId) {
       return res.status(400).json({
         success: false,
         error: "ID do usuário faltando.",
-      });
-    }
-
-    if (currentTokenAmount < CARD_ROLL_COST) {
-      return res.status(400).json({
-        success: false,
-        error: "Quantidade de tokens insuficiente",
       });
     }
 
@@ -273,6 +265,7 @@ app.post("/api/rollCard", async (req, res) => {
     }
 
     const cardResp = {
+      id: data.data.id,
       cardID: data.data.id,
       name: data.data.name,
       number: data.data.number,
@@ -280,7 +273,7 @@ app.post("/api/rollCard", async (req, res) => {
     };
 
     const updatedUser = await updateUserTokensAndInventory({
-      userId: resolvedUserId,
+      userId,
       card: cardResp,
       tokenCost: CARD_ROLL_COST,
     });
@@ -323,16 +316,18 @@ app.get("/api/users/:userId/tokens", async (req, res) => {
   try {
     const { userId } = req.params;
     const userTokens = await getUserInventoryById(userId, "token");
+    const tokenAmount = Number(userTokens?.tokenAmount ?? 0);
 
     res.status(200).json({
       success: true,
-      tokens: userTokens
-    })
+      tokens: tokenAmount,
+      tokenAmount,
+    });
   } catch(error) {
     res.status(400).json({
       success: false,
       error: error.message
-    })
+    });
   }
 });
 
