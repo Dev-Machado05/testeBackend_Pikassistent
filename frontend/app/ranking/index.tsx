@@ -1,6 +1,6 @@
 import { View, Text, StyleSheet, FlatList, ActivityIndicator, TouchableOpacity } from 'react-native';
 import { useState, useEffect } from 'react';
-import { getRanking } from '../../services/gameService';
+import { getGlobalRanking } from '../../services/gameService';
 import { router } from 'expo-router';
 
 export default function RankingScreen() {
@@ -14,7 +14,7 @@ export default function RankingScreen() {
   const loadRanking = async () => {
     setLoading(true);
     try {
-      const data = await getRanking();
+      const data = await getGlobalRanking();
       setRanking(data);
     } catch (error) {
       console.error(error);
