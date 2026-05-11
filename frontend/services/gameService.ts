@@ -1,4 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { db } from '@/assets/services/firebaseConfig';
+import {doc, setDoc, increment, getDoc, collection, query, orderBy, limit, getDocs} from 'firebase/firestore';
 
 const POKEAPI_BASE = 'https://pokeapi.co/api/v2/pokemon';
 
@@ -25,10 +27,10 @@ const LEGENDARY_IDS = [
   1007, 1008, 1009, 1010, 1011, 1012, 1013, 1014, 1015, 1016, 1017,  // Paldea
 ];
 
-const API_BASE = 'http://localhost:7070/api'; // Ajuste para IP do seu backend
+const API_BASE = process.env.EXPO_PUBLIC_API_URL || "http://localhost:7070"; 
 
 export async function getDailyPokemons(): Promise<Pokemon[]> {
-  const response = await fetch(`${API_BASE}/daily`);
+  const response = await fetch(`${API_BASE}/api/daily`);
   const data = await response.json();
   return data;
 }
@@ -70,19 +72,72 @@ async function fetchPokemon(id: number): Promise<Pokemon> {
   }
 }
 
-// Função para salvar pontuação (integração com Firebase depois)
-export async function saveScore(userId: string, points: number): Promise<void> {
-  const currentScore = await AsyncStorage.getItem(`score_${userId}`);
-  const newScore = (parseInt(currentScore || '0') + points).toString();
-  await AsyncStorage.setItem(`score_${userId}`, newScore);
+export async function saveScoreToFirebase(userId: string, points: number, username: string): Promise<void> {
+    const userRef = doc(db, 'ranking', userId);
+
+    await setDoc(userRef, {
+        username: username,
+        totalScore: increment(points),
+        lastPlayDate: new Date().toISOString(),
+        updatedAt: new Date()
+    }, { merge: true });
 }
 
-// Função para buscar ranking (mock - depois integra com backend)
-export async function getRanking(): Promise<{ name: string; score: number }[]> {
-  // TODO: Buscar do backend
-  return [
-    { name: "Ash", score: 12500 },
-    { name: "Misty", score: 8900 },
-    { name: "Brock", score: 6700 },
-  ];
+export async function getGlobalRanking(): Promise<{ name: string; score: number }[]> {
+    const rankingRef = collection(db, 'ranking');
+    const q = query(rankingRef, orderBy('totalScore', 'desc'), limit(10));
+    const snapshot = await getDocs(q);
+    
+    return snapshot.docs.map(doc => ({
+        name: doc.data().username,
+        score: doc.data().totalScore
+    }));
+}
+
+export async function saveDailyProgress(userId: string, pokemonIndex: number, points: number) {
+  const today = new Date().toISOString().split('T')[0];
+  const progressRef = doc(db, 'dailyProgress', `${userId}_${today}`);
+  
+  await setDoc(progressRef, {
+    [`pokemon_${pokemonIndex}`]: {
+      completed: true,
+      points: points,
+      date: today
+    }
+  }, { merge: true });
+}
+
+export async function hasCompletedPokemon(userId: string, pokemonIndex: number): Promise<boolean> {
+  const today = new Date().toISOString().split('T')[0];
+  const progressRef = doc(db, 'dailyProgress', `${userId}_${today}`);
+  const docSnap = await getDoc(progressRef);
+  
+  if (docSnap.exists()) {
+    return docSnap.data()[`pokemon_${pokemonIndex}`]?.completed || false;
+  }
+  return false;
+}
+
+export async function getTodayCompletedCount(userId: string): Promise<number> {
+  const today = new Date().toISOString().split('T')[0];
+  console.log('🔍 getTodayCompletedCount - userId:', userId); 
+  console.log('🔍 getTodayCompletedCount - today:', today);
+
+  const progressRef = doc(db, 'dailyProgress', `${userId}_${today}`);
+  const docSnap = await getDoc(progressRef);
+  
+  console.log('🔍 Documento existe?', docSnap.exists());
+
+  if (!docSnap.exists()) return 0;
+  
+  const data = docSnap.data();
+  console.log('🔍 Dados do documento:', data)
+
+  let count = 0;
+  for (let i = 0; i < 3; i++) {
+    if (data[`pokemon_${i}`]?.completed) count++;
+  }
+  console.log('🔍 Total completado:', count);
+
+  return count;
 }

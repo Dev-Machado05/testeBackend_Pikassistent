@@ -1,8 +1,9 @@
 import { View, Text, StyleSheet, TextInput, TouchableOpacity, Image, Alert, ActivityIndicator } from 'react-native';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, use } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { getDailyPokemons, Pokemon, saveScore } from '../../services/gameService';
+import { getDailyPokemons, getTodayCompletedCount, hasCompletedPokemon, Pokemon, saveDailyProgress, saveScoreToFirebase } from '../../services/gameService';
 import { router } from 'expo-router';
+import { auth } from '@/assets/services/firebaseConfig';
 
 export default function GameScreen() {
   const [dailyPokemons, setDailyPokemons] = useState<Pokemon[]>([]);
@@ -13,6 +14,8 @@ export default function GameScreen() {
   const [loading, setLoading] = useState(true);
   const [gameFinished, setGameFinished] = useState(false);
   const [revealed, setRevealed] = useState(false);
+  const API_URL = (process.env.EXPO_PUBLIC_API_URL || "http://localhost:7070").replace(/\/$/, ""); 
+  const [user, setUser] = useState<any>(null);
   
   useEffect(() => {
     loadGame();
@@ -21,10 +24,46 @@ export default function GameScreen() {
   const loadGame = async () => {
     setLoading(true);
     try {
-      const userId = await AsyncStorage.getItem('userToken') || 'guest';
+      const userId = auth.currentUser?.uid;
+      console.log('🔍 1. userId:', userId); 
+      const currentUser = auth.currentUser;
+      console.log('Usuário logado UID:', currentUser?.uid);
+      console.log('Usuário logado nome:', currentUser?.displayName);
+      setUser(currentUser);
+
       const pokemons = await getDailyPokemons();
       setDailyPokemons(pokemons);
+      console.log('🔍 2. Pokémons carregados:', pokemons.length);
       
+      if (userId) {
+        const completedCount = await getTodayCompletedCount(userId);
+        console.log('🔍 3. completedCount:', completedCount)
+
+        if (completedCount >= 3) {
+          console.log('🔍 4. Entrou no completedCount >= 3');
+          Alert.alert(
+            'Dia já jogado!',
+            `Você já completou ${completedCount} Pokémon(s) hoje. Continue jogando para completar o restante!`,
+            [
+              {text: 'ver ranking', onPress: () => router.push('/ranking')},
+              {text: 'voltar ao início', onPress: () => router.push('/home')}
+            ]
+          );
+          setGameFinished(true);
+          setLoading(false);
+          return;
+        }
+
+        if (completedCount > 0) {
+          console.log('🔍 5. Entrou no completedCount > 0');
+          Alert.alert(
+            'progresso', 'você já completou ' + completedCount + ' pokémon(s) hoje! continue jogando para completar o restante!',
+          )
+        }else{
+          console.log('🔍 6. userId é undefined ou null');
+        }
+      }
+
       const savedScore = await AsyncStorage.getItem(`score_${userId}`);
       if (savedScore) setScore(parseInt(savedScore));
     } catch (error) {
@@ -65,7 +104,7 @@ export default function GameScreen() {
     }
   };
   
-  const checkGuess = () => {
+  const checkGuess = async () => {
     if (!input.trim()) {
       Alert.alert('Ops!', 'Digite o nome do Pokémon');
       return;
@@ -77,12 +116,31 @@ export default function GameScreen() {
       const points = calculatePoints();
       const newScore = score + points;
       setScore(newScore);
-      setRevealed(true);
       
-      const userId = AsyncStorage.getItem('userToken');
-      userId.then(id => {
-        if (id) saveScore(id, points);
-      });
+      const userId = auth.currentUser?.uid;
+      const userName = user?.displayName || 'Anônimo';
+
+      if (userId) {
+        const alreadyCompleted = await hasCompletedPokemon(userId, currentIndex);
+        if (alreadyCompleted) {
+          Alert.alert('Atenção!', 'Você já completou este Pokémon hoje!');
+          nextPokemon();
+          return;
+        }
+      }
+
+      console.log('Valores:', { userId, userName, points });
+      if (userId && userName){
+        console.log('Tentando salvar:', { userId, points, userName });
+        const result = await saveScoreToFirebase(userId, points, userName);
+        await saveDailyProgress(userId, currentIndex, points);
+        console.log('Resultado:', result);
+      }else{        console.warn('Usuário ou nome não disponíveis para salvar pontuação');
+      }
+
+      Alert.alert('Parabéns!', `Você ganhou ${points} pontos!`);
+
+      setRevealed(true);
       
       Alert.alert(
         '🎉 Acertou!', 
@@ -143,6 +201,16 @@ export default function GameScreen() {
         Pokémon {currentIndex + 1} de {dailyPokemons.length}
       </Text>
       
+      <View style={styles.progressContainer}>
+        {dailyPokemons.map((_, idx) => (
+          <View key={idx} style={styles.progressDot}>
+            <Text style={idx <= currentIndex ? styles.progressActive : styles.progressInactive}>
+              {idx < currentIndex ? '✅' : '⬜'}
+            </Text>
+          </View>
+        ))}
+      </View>
+
       <Image 
         source={{ uri: currentPokemon.sprite }}
         style={[styles.silhouette, revealed && styles.revealed]}
@@ -291,5 +359,22 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     textTransform: 'capitalize',
     marginBottom: 20
+  },
+  progressContainer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 20,
+    marginBottom: 20
+  },
+  progressDot: {
+    width: 40,
+    alignItems: 'center'
+  },
+  progressActive: {
+    fontSize: 20
+  },
+  progressInactive: {
+    fontSize: 20,
+    opacity: 0.3
   }
 });
